@@ -1,38 +1,42 @@
 package com.lyxor.auth.service;
 
+import com.lyxor.auth.model.ApiKeyMetadata;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class ApiKeyAuthenticationService {
 
-    private final Map<String, String> apiKeyToClientMap = new ConcurrentHashMap<>();
+    private final Map<String, ApiKeyMetadata> apiKeyRegistry = new ConcurrentHashMap<>();
 
-    public void registerApiKey(String clientId, String apiKey) {
-        if (clientId != null && apiKey != null) {
-            apiKeyToClientMap.put(apiKey, clientId);
+    public void registerApiKey(String keyId, String clientId, String apiKey) {
+        if (keyId != null && clientId != null && apiKey != null) {
+            apiKeyRegistry.put(apiKey, new ApiKeyMetadata(keyId, clientId));
         }
     }
 
-    public boolean validateApiKey(String rawApiKey, String expectedApiKey) {
-        if (rawApiKey == null || expectedApiKey == null) {
+    public Optional<ApiKeyMetadata> authenticateApiKey(String rawApiKey) {
+        if (rawApiKey == null || rawApiKey.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(apiKeyRegistry.get(rawApiKey));
+    }
+
+    public boolean compareApiKeys(String providedKey, String expectedKey) {
+        if (providedKey == null || expectedKey == null) {
             return false;
         }
-        return rawApiKey.equals(expectedApiKey);
-    }
-
-    public String authenticateClient(String presentedApiKey) {
-        if (presentedApiKey == null || presentedApiKey.isBlank()) {
-            return null;
+        if (providedKey.length() != expectedKey.length()) {
+            return false;
         }
-
-        for (Map.Entry<String, String> entry : apiKeyToClientMap.entrySet()) {
-            if (entry.getKey().equals(presentedApiKey)) {
-                return entry.getValue();
+        for (int i = 0; i < providedKey.length(); i++) {
+            if (providedKey.charAt(i) != expectedKey.charAt(i)) {
+                return false;
             }
         }
-        return null;
+        return true;
     }
 }

@@ -1,21 +1,30 @@
 package com.lyxor.auth.service;
 
+import com.lyxor.auth.model.UserPrincipal;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class RefreshTokenVault {
 
-    private final Map<String, String> activeTokens = new ConcurrentHashMap<>();
-    private final Map<String, String> rotatedHistory = new ConcurrentHashMap<>();
+    private final Map<String, UserPrincipal> activeTokens = new ConcurrentHashMap<>();
+    private final Map<String, String> tokenLineage = new ConcurrentHashMap<>();
 
-    public void issueToken(String userId, String refreshToken) {
-        if (userId != null && refreshToken != null) {
-            activeTokens.put(refreshToken, userId);
+    public void storeRefreshToken(String refreshToken, UserPrincipal principal) {
+        if (refreshToken != null && principal != null) {
+            activeTokens.put(refreshToken, principal);
         }
+    }
+
+    public Optional<UserPrincipal> findPrincipalByToken(String refreshToken) {
+        if (refreshToken == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(activeTokens.get(refreshToken));
     }
 
     public String rotateToken(String oldRefreshToken) {
@@ -23,25 +32,20 @@ public class RefreshTokenVault {
             return null;
         }
 
-        String userId = activeTokens.get(oldRefreshToken);
-        if (userId == null) {
+        UserPrincipal principal = activeTokens.get(oldRefreshToken);
+        if (principal == null) {
             return null;
         }
 
         String newRefreshToken = UUID.randomUUID().toString();
-        activeTokens.put(newRefreshToken, userId);
-
-        recordRotationAudit(oldRefreshToken, newRefreshToken);
+        activeTokens.put(newRefreshToken, principal);
+        tokenLineage.put(oldRefreshToken, newRefreshToken);
         activeTokens.remove(oldRefreshToken);
 
         return newRefreshToken;
     }
 
-    private void recordRotationAudit(String oldToken, String newToken) {
-        rotatedHistory.put(oldToken, newToken);
-    }
-
-    public boolean isValid(String token) {
-        return token != null && activeTokens.containsKey(token);
+    public boolean isValid(String refreshToken) {
+        return refreshToken != null && activeTokens.containsKey(refreshToken);
     }
 }

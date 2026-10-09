@@ -1,28 +1,32 @@
 package com.lyxor.auth;
 
 import com.lyxor.auth.context.SecurityContextHolder;
+import com.lyxor.auth.model.ApiKeyMetadata;
 import com.lyxor.auth.model.AuthToken;
 import com.lyxor.auth.model.UserPrincipal;
 import com.lyxor.auth.service.ApiKeyAuthenticationService;
 import com.lyxor.auth.service.AuthRateLimiter;
 import com.lyxor.auth.service.JwtTokenService;
 import com.lyxor.auth.service.PasswordResetTokenService;
-import com.lyxor.auth.service.RbacAuthorizationService;
 import com.lyxor.auth.service.RefreshTokenVault;
+import com.lyxor.auth.service.RoleHierarchyService;
 import com.lyxor.auth.service.SecretKeyRotationManager;
 import com.lyxor.auth.service.TokenRevocationService;
+import com.lyxor.auth.service.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.Optional;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class AuthenticationVaultTests {
 
+    private UserRepository userRepository;
     private JwtTokenService jwtTokenService;
     private ApiKeyAuthenticationService apiKeyService;
-    private RbacAuthorizationService rbacService;
+    private RoleHierarchyService roleHierarchyService;
     private TokenRevocationService revocationService;
     private RefreshTokenVault refreshTokenVault;
     private AuthRateLimiter rateLimiter;
@@ -31,9 +35,10 @@ class AuthenticationVaultTests {
 
     @BeforeEach
     void setUp() {
-        jwtTokenService = new JwtTokenService();
+        userRepository = new UserRepository();
+        jwtTokenService = new JwtTokenService("test-secret-key-32-chars-long-2026-auth", 3600, 60);
         apiKeyService = new ApiKeyAuthenticationService();
-        rbacService = new RbacAuthorizationService();
+        roleHierarchyService = new RoleHierarchyService();
         revocationService = new TokenRevocationService();
         refreshTokenVault = new RefreshTokenVault();
         rateLimiter = new AuthRateLimiter(5, 1);
@@ -42,8 +47,16 @@ class AuthenticationVaultTests {
     }
 
     @Test
+    void testUserAuthentication() {
+        Optional<UserPrincipal> user = userRepository.findByUsername("admin");
+        assertTrue(user.isPresent());
+        assertTrue(userRepository.verifyPassword("admin123", user.get().getPasswordHash()));
+        assertFalse(userRepository.verifyPassword("wrongpass", user.get().getPasswordHash()));
+    }
+
+    @Test
     void testTokenGenerationAndValidation() {
-        UserPrincipal principal = new UserPrincipal("u100", "testuser", Set.of("ROLE_USER"));
+        UserPrincipal principal = new UserPrincipal("u100", "testuser", "hash", Set.of("ROLE_USER"));
         AuthToken token = jwtTokenService.generateToken(principal);
 
         assertNotNull(token);
@@ -54,19 +67,18 @@ class AuthenticationVaultTests {
 
     @Test
     void testApiKeyAuthentication() {
-        apiKeyService.registerApiKey("client-abc", "sec-key-12345");
-        String authenticated = apiKeyService.authenticateClient("sec-key-12345");
-        assertEquals("client-abc", authenticated);
+        apiKeyService.registerApiKey("key-1", "client-abc", "sec-key-12345");
+        Optional<ApiKeyMetadata> authenticated = apiKeyService.authenticateApiKey("sec-key-12345");
+        assertTrue(authenticated.isPresent());
+        assertEquals("client-abc", authenticated.get().getClientId());
 
-        assertNull(apiKeyService.authenticateClient("wrong-key"));
+        assertTrue(apiKeyService.authenticateApiKey("wrong-key").isEmpty());
     }
 
     @Test
-    void testRbacPermissions() {
-        UserPrincipal user = new UserPrincipal("u2", "admin-user", Set.of("ROLE_ADMIN", "ROLE_USER"));
-        assertTrue(rbacService.hasRole(user, "ADMIN"));
-        assertTrue(rbacService.hasRole(user, "USER"));
-        assertFalse(rbacService.hasRole(user, "SUPERADMIN"));
+    void testRoleHierarchy() {
+        UserPrincipal adminUser = new UserPrincipal("u1", "admin", "hash", Set.of("ROLE_ADMIN"));
+        assertTrue(roleHierarchyService.isAuthorized(adminUser, "ROLE_ADMIN"));
     }
 
     @Test
@@ -79,7 +91,8 @@ class AuthenticationVaultTests {
 
     @Test
     void testRefreshTokenRotation() {
-        refreshTokenVault.issueToken("u1", "refresh-token-alpha");
+        UserPrincipal principal = new UserPrincipal("u1", "jdoe", "hash", Set.of("ROLE_USER"));
+        refreshTokenVault.storeRefreshToken("refresh-token-alpha", principal);
         assertTrue(refreshTokenVault.isValid("refresh-token-alpha"));
 
         String nextToken = refreshTokenVault.rotateToken("refresh-token-alpha");
@@ -110,7 +123,7 @@ class AuthenticationVaultTests {
 
     @Test
     void testSecurityContext() {
-        UserPrincipal principal = new UserPrincipal("u50", "context-user", Set.of("ROLE_OPERATOR"));
+        UserPrincipal principal = new UserPrincipal("u50", "context-user", "hash", Set.of("ROLE_OPERATOR"));
         SecurityContextHolder.setContext(principal);
         assertEquals(principal, SecurityContextHolder.getContext());
         SecurityContextHolder.clearContext();

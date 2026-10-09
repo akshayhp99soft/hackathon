@@ -32,7 +32,7 @@ public class AuthRateLimiter {
         this.refillRatePerSec = refillRatePerSec;
     }
 
-    public synchronized boolean tryAcquire(String clientIp) {
+    public boolean tryAcquire(String clientIp) {
         if (clientIp == null || clientIp.isBlank()) {
             return false;
         }
@@ -40,24 +40,31 @@ public class AuthRateLimiter {
         long now = System.currentTimeMillis();
         TokenBucket bucket = buckets.computeIfAbsent(clientIp, k -> new TokenBucket(maxBucketCapacity, now));
 
-        long elapsedMs = now - bucket.lastRefillMs;
-        int refillTokens = (int) (elapsedMs * refillRatePerSec / 1000);
+        synchronized (bucket) {
+            long elapsedMs = now - bucket.lastRefillMs;
+            int refillTokens = (int) (elapsedMs * refillRatePerSec / 1000);
 
-        if (refillTokens > 0) {
-            bucket.tokens = Math.min(maxBucketCapacity, bucket.tokens + refillTokens);
-            bucket.lastRefillMs = now;
+            if (refillTokens > 0) {
+                bucket.tokens = Math.min(maxBucketCapacity, bucket.tokens + refillTokens);
+                bucket.lastRefillMs = now;
+            }
+
+            if (bucket.tokens > 0) {
+                bucket.tokens--;
+                return true;
+            }
+
+            return false;
         }
-
-        if (bucket.tokens > 0) {
-            bucket.tokens--;
-            return true;
-        }
-
-        return false;
     }
 
     public int getAvailableTokens(String clientIp) {
         TokenBucket bucket = buckets.get(clientIp);
-        return bucket != null ? bucket.tokens : maxBucketCapacity;
+        if (bucket == null) {
+            return maxBucketCapacity;
+        }
+        synchronized (bucket) {
+            return bucket.tokens;
+        }
     }
 }

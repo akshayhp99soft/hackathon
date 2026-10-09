@@ -2,6 +2,7 @@ package com.lyxor.auth.service;
 
 import com.lyxor.auth.model.AuthToken;
 import com.lyxor.auth.model.UserPrincipal;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.crypto.Mac;
@@ -17,18 +18,26 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class JwtTokenService {
 
-    private final String hmacSecret = "enterprise-security-jwt-signing-secret-key-2026";
-    private final long tokenTtlSeconds = 3600;
-    private final long clockSkewSeconds = 60;
+    private final String hmacSecret;
+    private final long tokenTtlSeconds;
+    private final long clockSkewSeconds;
 
     private final Map<String, Instant> tokenExpirations = new ConcurrentHashMap<>();
 
+    public JwtTokenService(
+            @Value("${security.jwt.secret:enterprise-default-jwt-secret-key-2026-production}") String hmacSecret,
+            @Value("${security.jwt.ttl-seconds:3600}") long tokenTtlSeconds,
+            @Value("${security.jwt.clock-skew-seconds:60}") long clockSkewSeconds) {
+        this.hmacSecret = hmacSecret;
+        this.tokenTtlSeconds = tokenTtlSeconds;
+        this.clockSkewSeconds = clockSkewSeconds;
+    }
+
     public AuthToken generateToken(UserPrincipal principal) {
-        String tokenId = UUID.randomUUID().toString();
         Instant now = Instant.now();
         Instant expiresAt = now.plusSeconds(tokenTtlSeconds);
 
-        String payload = principal.userId() + ":" + principal.username() + ":" + String.join(",", principal.roles());
+        String payload = principal.getUserId() + ":" + principal.getUsername() + ":" + String.join(",", principal.getRoles());
         String signature = computeHmacSignature(payload, hmacSecret);
 
         String accessToken = Base64.getUrlEncoder().withoutPadding().encodeToString(payload.getBytes(StandardCharsets.UTF_8))
@@ -82,7 +91,7 @@ public class JwtTokenService {
         String payload = new String(decodedPayloadBytes, StandardCharsets.UTF_8);
         String[] chunks = payload.split(":");
         Set<String> roles = chunks.length > 2 ? Set.of(chunks[2].split(",")) : Set.of();
-        return new UserPrincipal(chunks[0], chunks[1], roles);
+        return new UserPrincipal(chunks[0], chunks[1], null, roles);
     }
 
     private String computeHmacSignature(String data, String secret) {
